@@ -1,0 +1,29 @@
+services:
+  pihole:
+    container_name: pihole
+    image: pihole/pihole:latest
+    restart: unless-stopped
+    ports:
+      # DNS uniquement. L'admin web n'est plus publiée : on y accède via
+      # nginx (HTTPS, port 443), à travers le réseau interne "proxy".
+      - "53:53/tcp"
+      - "53:53/udp"
+    environment:
+      TZ: "Europe/Paris"
+      FTLCONF_webserver_api_password: "${PIHOLE_PASSWORD}"
+      FTLCONF_dns_listeningMode: "ALL"
+      FTLCONF_database_maxDBdays: "30"
+      # Derrière le reverse proxy sous /pihole : Pi-hole préfixe TOUTES ses URLs
+      # (GUI + API) par /pihole, et nginx strippe ce préfixe (cf. srv-cyber-infra.conf).
+      # NB : on garde webhome=/admin/ par défaut (le changer casse la réécriture
+      # d'URL en v6). Mécanisme officiel reverse-proxy, cf. docs/pihole.md.
+      FTLCONF_webserver_paths_prefix: "/pihole"
+    volumes:
+      - "./etc-pihole:/etc/pihole"
+    networks:
+      - default
+      - proxy
+
+networks:
+  proxy:
+    external: true

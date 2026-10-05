@@ -1,0 +1,15 @@
+# cert-renew.timer — déclencheur quotidien de cert-renew.service.
+# Quotidien car la cadence se choisit selon le budget de rattrapage d'échec,
+# pas la fréquence de l'action (le script est no-op si le cert est loin
+# de l'expiration). Persistent=true : run rattrapé au boot si le Pi était
+# éteint à l'heure prévue.
+[Unit]
+Description=Timer quotidien du renouvellement du cert TLS
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

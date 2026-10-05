@@ -1,0 +1,122 @@
+# Monitoring (observabilité) — socle Prometheus + Grafana.
+# Source de vérité : ce fichier. Le Pi exécute une COPIE dans
+# /data/docker/monitoring/ (cf. docs/monitoring.md). Secrets → .env (NON versionné).
+#
+# 3 RÔLES, jamais mélangés (un outil = une tâche) :
+#   - VITRINE  : grafana       → affiche + alerte (le seul "web", sur "proxy").
+#   - ENTREPÔT : prometheus     → scrape les capteurs toutes les 15 s + stocke.
+#   - CAPTEURS : node_exporter  → métriques de l'HÔTE (temp, disque, RAM, CPU).
+#                cadvisor       → métriques PAR CONTENEUR (CPU/RAM/IO/état).
+#
+# RÉSEAUX (moindre privilège) :
+#   - "monitoring" PRIVÉ : prometheus + les capteurs + grafana s'y parlent.
+#   - "proxy" PARTAGÉ    : SEUL grafana y est aussi → joignable par nginx.
+# AUCUN `ports:` publié → rien ne contourne UFW. nginx reste l'unique entrée web.
+#
+# GARDE-FOUS STOCKAGE (la SD est petite) :
+#   - Prometheus : rétention bornée en TEMPS (15 j) ET en TAILLE (1 Go) — voir
+#     son `command`. Le premier seuil atteint purge les vieux blocs.
+#   - Logs Docker : rotation via l'anchor `x-logging` ci-dessous, appliqué à
+#     chaque service (sinon les fichiers json grossissent sans limite).
+
+# Anchor réutilisable : 10 Mo × 3 fichiers = 30 Mo max de logs par conteneur.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  grafana:
+    image: grafana/grafana-oss:latest
+    container_name: grafana
+    restart: unless-stopped
+    logging: *default-logging
+    env_file: .env
+    environment:
+      # Grafana est servi DERRIÈRE nginx sous le sous-chemin /grafana/.
+      # Il doit le savoir pour réécrire ses liens/redirections correctement.
+      GF_SERVER_ROOT_URL: "https://srv-cyber-infra.<tailnet>.ts.net/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    volumes:
+      # Volume NOMMÉ (pas bind) : Grafana tourne en uid 472, un bind sur /data
+      # imposerait un chown manuel. Docker gère les droits du volume nommé.
+      - "grafana-data:/var/lib/grafana"
+      # Bind mount (lecture seule) : fait ENTRER la conf provisionnée (datasource
+      # Prometheus) là où Grafana la lit au démarrage. Source de vérité versionnée.
+      - "./grafana/provisioning:/etc/grafana/provisioning:ro"
+    networks:
+      - monitoring   # pour lire prometheus
+      - proxy        # pour être servi par nginx (le SEUL à double réseau)
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    logging: *default-logging
+    # On REDÉFINIT le command par défaut → il faut donc REMETTRE config.file et
+    # storage.tsdb.path, puis AJOUTER les deux bornes de rétention.
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"   # purge ce qui dépasse 15 jours
+      - "--storage.tsdb.retention.size=1GB"    # ET plafond dur à 1 Go
+    volumes:
+      # Config en lecture seule (source de vérité versionnée à côté).
+      - "./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro"
+      # Base time-series persistante (survit à la recréation du conteneur).
+      - "prometheus-data:/prometheus"
+    networks:
+      - monitoring   # PRIVÉ : volontairement PAS sur "proxy"
+
+  node_exporter:
+    image: prom/node-exporter:latest
+    container_name: node_exporter
+    restart: unless-stopped
+    logging: *default-logging
+    # Capteur de l'HÔTE. On lui monte /proc, /sys et / en LECTURE SEULE :
+    # il observe le Pi sans pouvoir rien y modifier (moindre privilège).
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/host/root"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+      # Textfile collector : publie toute métrique déposée en .prom dans ce
+      # dossier (utilisé par renew-cert.sh pour l'expiration du cert TLS).
+      - "--collector.textfile.directory=/textfile"
+    volumes:
+      - "/proc:/host/proc:ro"
+      - "/sys:/host/sys:ro"
+      - "/:/host/root:ro,rslave"
+      # Dépôt des métriques "custom" (lecture seule : moindre privilège).
+      - "/data/docker/monitoring/textfile:/textfile:ro"
+    networks:
+      - monitoring
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: cadvisor
+    restart: unless-stopped
+    logging: *default-logging
+    # Capteur des CONTENEURS. A besoin de voir le runtime Docker et le cgroupfs,
+    # en LECTURE SEULE. /dev/kmsg : lecture des events kernel (recommandé).
+    privileged: true
+    devices:
+      - "/dev/kmsg"
+    volumes:
+      - "/:/rootfs:ro"
+      - "/var/run:/var/run:ro"
+      - "/sys:/sys:ro"
+      - "/var/lib/docker/:/var/lib/docker:ro"
+    networks:
+      - monitoring
+
+networks:
+  monitoring:
+    driver: bridge   # réseau privé de la stack d'observabilité
+  proxy:
+    external: true   # partagé avec nginx — créé via : docker network create proxy
+
+volumes:
+  grafana-data:
+  prometheus-data:

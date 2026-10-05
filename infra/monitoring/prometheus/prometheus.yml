@@ -1,0 +1,24 @@
+# Config Prometheus — QUI scraper, et à quelle fréquence.
+# Prometheus va CHERCHER les métriques (modèle "pull") : il appelle chaque
+# capteur sur son port HTTP toutes les 15 s et stocke ce qu'il récupère.
+# Les noms (node_exporter, cadvisor) sont résolus par le DNS Docker du
+# réseau "monitoring" → pas besoin d'IP.
+
+global:
+  scrape_interval: 15s        # fréquence de collecte par défaut
+
+scrape_configs:
+  # Prometheus se surveille lui-même (santé du collecteur).
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Capteur de l'hôte (temp, disque, RAM, CPU du Pi).
+  - job_name: node
+    static_configs:
+      - targets: ["node_exporter:9100"]
+
+  # Capteur des conteneurs (CPU/RAM/IO/état de chaque container).
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]

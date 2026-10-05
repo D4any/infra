@@ -1,0 +1,13 @@
+# Datasource provisionnée AU DÉMARRAGE (infra-as-code) : pas de saisie manuelle.
+# Grafana lit ce fichier au boot et crée/maintient la source de données.
+# "proxy" = Grafana interroge Prometheus côté SERVEUR (réseau "monitoring"),
+# le navigateur de l'user ne voit jamais Prometheus directement.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

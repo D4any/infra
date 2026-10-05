@@ -1,0 +1,13 @@
+# Réglages locaux de l'outillage (machine-spécifiques, pas de la doc)
+.claude/
+CLAUDE.md
+
+# Secrets — JAMAIS versionnés (APP_KEY, mots de passe DB, tokens...)
+.env
+**/.env
+
+# Données runtime des services (vivent sur le Pi, jamais dans le repo)
+**/pgdata/
+**/upload/
+**/etc-pihole/
+**/certs/

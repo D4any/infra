@@ -1,0 +1,12 @@
+# cert-renew.service — lance le renouvellement du cert TLS (oneshot).
+# Source de vérité : infra/cert-renew/ (repo). Copie : /etc/systemd/system/.
+# En cas d'échec du script : unité en "failed" → visible via systemctl/journalctl.
+[Unit]
+Description=Renouvellement du cert TLS (tailscale cert) + reload nginx si changé
+# Le script a besoin du réseau, de tailscaled et de docker.
+Wants=network-online.target
+After=network-online.target tailscaled.service docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/renew-cert.sh

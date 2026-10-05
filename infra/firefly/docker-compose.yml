@@ -1,0 +1,65 @@
+# Firefly III — traceur de dépenses familial (multi-utilisateur ISOLÉ).
+# Source de vérité : ce fichier. Le Pi exécute une COPIE dans
+# /data/docker/firefly/ (cf. docs/firefly.md). Secrets → .env (NON versionné).
+#
+# 3 conteneurs : app (Firefly) + db (PostgreSQL) + cron (tâches récurrentes).
+# AUCUN `ports:` publié → rien ne contourne UFW (dette DOCKER-USER). nginx, sur
+# le réseau "proxy", est le seul point d'entrée web. La db vit sur un réseau
+# PRIVÉ "internal" : ni nginx ni Pi-hole ne peuvent l'atteindre — seuls
+# firefly-app et firefly-cron lui parlent.
+
+services:
+  app:
+    image: fireflyiii/core:latest
+    container_name: firefly-app
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Pièces jointes (reçus, etc.). Bind mount → données sur la carte /data.
+      - "./upload:/var/www/html/storage/upload"
+    networks:
+      - internal     # pour parler à la db
+      - proxy        # pour être joignable par nginx
+
+  db:
+    image: postgres:16-alpine
+    container_name: firefly-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${DB_DATABASE}"
+      POSTGRES_USER: "${DB_USERNAME}"
+      POSTGRES_PASSWORD: "${DB_PASSWORD}"
+    volumes:
+      # Données persistantes : survivent à toute recréation du conteneur.
+      - "./pgdata:/var/lib/postgresql/data"
+    networks:
+      - internal     # PRIVÉ : volontairement PAS sur "proxy"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ${DB_DATABASE}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  cron:
+    image: alpine
+    container_name: firefly-cron
+    restart: unless-stopped
+    # Déclenche le cron interne de Firefly chaque nuit à 03:00 (factures
+    # récurrentes, exécution des règles, etc.). Le `$$` empêche Compose
+    # d'interpoler la variable : c'est le shell DU conteneur qui la lit,
+    # depuis l'environnement ci-dessous.
+    environment:
+      STATIC_CRON_TOKEN: "${STATIC_CRON_TOKEN}"
+    command: >
+      sh -c "echo \"0 3 * * * wget -qO- http://app:8080/api/v1/cron/$$STATIC_CRON_TOKEN\" | crontab - && crond -f -L /dev/stdout"
+    networks:
+      - internal     # parle à app via le réseau privé
+
+networks:
+  internal:
+    driver: bridge   # réseau privé de la stack (app + db + cron)
+  proxy:
+    external: true   # partagé avec nginx — créé via : docker network create proxy
